@@ -301,11 +301,14 @@ impl Sessions {
             };
         }
 
-        // egui_snow::Snow::new("snow_effect") // todo
-        //     .color(egui::Color32::from_white_alpha(200))
-        //     .speed(40.0..=100.0)
-        //     .size(0.5..=2.0)
-        //     .show(ctx);
+        if self.settings.let_it_snow {
+            egui_snow::Snow::new("snow_effect")
+                .color(egui::Color32::from_white_alpha(200))
+                .speed(40.0..=100.0)
+                .size(0.3..=1.5)
+                .density(170)
+                .show(ctx);
+        }
 
         // if speaking, continuously check if stopped
         #[cfg(feature = "tts")]

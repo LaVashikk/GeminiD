@@ -1,5 +1,6 @@
 use std::fmt;
 
+use chrono::{Datelike, Local};
 use eframe::{
     egui::{self, collapsing_header::CollapsingState, CornerRadius, Frame, Layout, Stroke, Vec2},
     emath::Numeric,
@@ -563,10 +564,13 @@ pub struct Settings {
     #[serde(default)]
     pub public_file_upload: bool,
     pub proxy_path: Option<String>,
+    pub let_it_snow: bool,
+    is_winter: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
+        let is_winter = matches!(Local::now().month(), 12 | 1 | 2);
         Self {
             auth_method: AuthMethod::ApiKey,
             api_key: String::new(), // todo try read from env
@@ -579,6 +583,8 @@ impl Default for Settings {
             include_thoughts_in_history: false,
             public_file_upload: true,
             proxy_path: None,
+            is_winter: is_winter,
+            let_it_snow: is_winter,
         }
     }
 }
@@ -753,6 +759,11 @@ impl Settings {
             ui.add(
                 egui::TextEdit::singleline(template).hint_text("http://your_proxy_address:port"),
             );
+        }
+
+        // ui.toggle_value(&mut self.let_it_snow, "Let It Snow!");
+        if ui.add(egui::Button::new("Let It Snow!").selected(self.let_it_snow)).clicked() {
+            self.let_it_snow = !self.let_it_snow;
         }
 
         ui.label("Reset global settings to defaults");
