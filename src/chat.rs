@@ -3,7 +3,7 @@ use crate::sessions::SharedTts;
 
 use crate::{
     easymark::MemoizedEasymarkHighlighter,
-    file_handler::convert_file_to_part,
+    file_handler::{Attachment, AttachmentState},
     widgets::{self, GeminiModel, ModelPicker, Settings},
 };
 use anyhow::{Context, Result};
@@ -17,7 +17,9 @@ use egui_virtual_list::VirtualList;
 use flowync::{error::Compact, CompactFlower, CompactHandle};
 use futures_util::TryStreamExt;
 use gemini_rust::{
+    Gemini, GenerationConfig, HarmBlockThreshold, HarmCategory, Part,
     SafetySetting, UsageMetadata,
+};
 use std::{
     io::Write,
     path::PathBuf,
@@ -83,7 +85,7 @@ impl Default for Message {
     fn default() -> Self {
         Self {
             content: String::new(),
-            role: Role::User,
+            role: MessageRole::User,
             is_generating: false,
             requested_at: Instant::now(),
             time: chrono::Utc::now(),
@@ -122,7 +124,6 @@ fn tts_control(tts: SharedTts, text: String, speak: bool) {
 
 fn make_short_name(_name: &str) -> String {
     // todo stuff
-    // todo lmao
     // let mut c = name
     //     .split('/')
     //     .next()
@@ -145,7 +146,7 @@ enum MessageAction {
 
 impl Message {
     #[inline]
-    fn user(content: String, model: GeminiModel, files: Vec<PathBuf>) -> Self {
+    fn user(content: String, model: GeminiModel, files: Vec<Attachment>) -> Self {
         Self {
             content,
             role: MessageRole::User,
@@ -169,7 +170,7 @@ impl Message {
 
     #[inline]
     const fn is_user(&self) -> bool {
-        matches!(self.role, Role::User)
+        matches!(self.role, MessageRole::User)
     }
 
     fn show(
@@ -194,10 +195,20 @@ impl Message {
                         .rect
                         .left()
                         - f;
-                    ui.add_enabled(false, egui::Label::new(&self.model.to_string()));
+                    // ui.add_enabled(false, egui::Label::new(&self.model.to_string())); //? todo redundant?
                     if let Some(duration) = self.generation_time {
                         ui.weak(format!("({:.1}s)", duration.as_secs_f64()))
                             .on_hover_text("Generation time");
+                    }
+                    if let Some(usage) = &self.usage {
+                        let total = usage.total_token_count.unwrap_or(0);
+                        let text = format!(
+                            "In: {} / Out: {} / Total: {}",
+                            usage.prompt_token_count.unwrap_or(0),
+                            usage.candidates_token_count.unwrap_or(0),
+                            total
+                        );
+                        ui.weak(format!("{} ᵗ", total)).on_hover_text(text);
                     }
                     offset
                 }
@@ -217,26 +228,33 @@ impl Message {
                 ui.horizontal(|ui| {
                     ui.add(egui::Spinner::new());
 
-                    // show time spent waiting for response
-                    ui.add_enabled(
-                        false,
-                        egui::Label::new(format!(
-                            "{:.1}s",
-                            self.requested_at.elapsed().as_secs_f64()
-                        )),
-                    )
+                    if let Some(status) = &self.status_message {
+                        ui.label(status);
+                    } else {
+                        // show time spent waiting for response
+                        ui.add_enabled(
+                            false,
+                            egui::Label::new(format!(
+                                "{:.1}s",
+                                self.requested_at.elapsed().as_secs_f64()
+                            )),
+                        );
+                    }
                 });
             } else if self.is_error {
-                ui.label(self.content.clone());
-                if ui
-                    .button("Retry")
-                    .on_hover_text(
-                        "Try to generate a response again. Make sure you have a valid API Key.",
-                    )
-                    .clicked()
-                {
-                    action = MessageAction::Retry(idx);
-                }
+                ui.vertical(|ui| {
+                    CommonMarkViewer::new().show(ui, commonmark_cache, &self.content);
+                    ui.add_space(8.0);
+                    if ui
+                        .button("🔄 Retry Generation")
+                        .on_hover_text(
+                            "Try to generate a response again. Make sure you have a valid API Key and stable connection.",
+                        )
+                        .clicked()
+                    {
+                        action = MessageAction::Retry(idx);
+                    }
+                });
             } else if self.is_prepending {
                 let textedit = ui.add(
                     egui::TextEdit::multiline(prepend_buf).hint_text("Prepend text to response…"),
@@ -448,24 +466,31 @@ pub type CompletionFlowerHandle =
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Chat {
-    chatbox: String,
+    pub chatbox: String,
     pub messages: Vec<Message>,
     pub summary: String,
-    stop_generating: Arc<AtomicBool>,
+    pub stop_generating: Arc<AtomicBool>,
     pub model_picker: ModelPicker,
-    pub files: Vec<PathBuf>,
-    prepend_buf: String,
+    pub files: Vec<Attachment>,
+    pub prepend_buf: String,
 
     #[serde(skip)]
-    chatbox_height: f32,
+    pub token_count: Option<u32>,
     #[serde(skip)]
-    flower: CompletionFlower,
+    pub last_content_hash: u64,
     #[serde(skip)]
-    retry_message_idx: Option<usize>,
+    pub last_token_check: Option<Instant>,
+
     #[serde(skip)]
-    virtual_list: VirtualList,
+    pub chatbox_height: f32,
     #[serde(skip)]
-    chatbox_highlighter: MemoizedEasymarkHighlighter,
+    pub flower: CompletionFlower,
+    #[serde(skip)]
+    pub retry_message_idx: Option<usize>,
+    #[serde(skip)]
+    pub virtual_list: VirtualList,
+    #[serde(skip)]
+    pub chatbox_highlighter: MemoizedEasymarkHighlighter,
 }
 
 impl Default for Chat {
@@ -487,9 +512,14 @@ impl Default for Chat {
             model_picker: ModelPicker::default(),
             files: Vec::new(),
             prepend_buf: String::new(),
+            token_count: None,
+            last_content_hash: 0,
+            last_token_check: None,
         }
     }
 }
+
+
 
 async fn request_completion(
     gemini: Gemini,
@@ -498,176 +528,255 @@ async fn request_completion(
     stop_generating: Arc<AtomicBool>,
     index: usize,
     use_streaming: bool,
+    public_file_upload: bool,
+    generation_config: GenerationConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log::info!(
-        "requesting completion... (history length: {})",
+        "Requesting completion... (history length: {})",
         messages.len()
     );
 
-    // Build a gemini-client-api session from the message history
-    let mut gemini_session = Session::new(messages.len());
+    let history = crate::chat_completion::build_history(
+        &gemini,
+        &messages,
+        None,
+        public_file_upload,
+        Some((index, handle)),
+    )
+    .await?;
 
-    // Regenerate from a certain point if needed
-    let messages_to_process = if messages.get(index).map_or(false, |m| m.is_generating) {
-        &messages[..index]
-    } else {
-        &messages
-    };
+    // 2. Prepare the request builder
+    let mut content_builder = gemini.generate_content();
 
-    // A buffer to hold parts for the current consecutive group of messages.
-    let mut parts_buffer = Vec::new();
-    // Tracks the author of the current group. `None` means we're at the start.
-    let mut current_author_is_user: Option<bool> = None;
+    // Inject constructed history
+    content_builder.contents.extend(history);
 
-    for message in messages_to_process {
-        // Skip messages that should not be part of the conversation history.
-        if message.is_thought || (message.content.is_empty() && message.files.is_empty()) {
-            continue;
-        }
-
-        let message_author_is_user = message.is_user();
-
-        // Check if the author has changed from the previous message.
-        // `current_author.is_some()` handles the very first message.
-        if current_author_is_user.is_some()
-            && current_author_is_user != Some(message_author_is_user)
-        {
-            // Author has changed. The previous group is complete. Submit it.
-            // Use `std::mem::take` to efficiently swap the buffer with an empty Vec.
-            let completed_parts = std::mem::take(&mut parts_buffer);
-            if !completed_parts.is_empty() {
-                if current_author_is_user.unwrap() {
-                    // unwrap is safe here
-                    gemini_session.ask(completed_parts);
-                } else {
-                    gemini_session.reply(completed_parts);
-                }
-            }
-        }
-
-        // -- Process the current message and add its parts to the buffer --
-
-        // Update the author for the current (or new) group.
-        current_author_is_user = Some(message_author_is_user);
-
-        for file_path in &message.files {
-            match convert_file_to_part(file_path).await {
-                Ok(part) => {
-                    parts_buffer.push(Part::text(
-                        format!(
-                            "File with name: {}",
-                            file_path.file_name().unwrap_or_default().to_string_lossy()
-                        )
-                        .into(),
-                    ));
-                    parts_buffer.push(part)
-                }
-                Err(e) => log::error!("Failed to convert file {}: {}", file_path.display(), e), // todo say to ui
-            }
-        }
-
-        if !message.content.is_empty() {
-            parts_buffer.push(Part::text(message.content.clone().into()));
-        }
-    }
-
-    // After the loop, the last group of messages might still be in the buffer.
-    // We need to submit this final batch.
-    if !parts_buffer.is_empty() {
-        if let Some(is_user) = current_author_is_user {
-            if is_user {
-                gemini_session.ask(parts_buffer);
-            } else {
-                gemini_session.reply(parts_buffer);
-            }
-        }
-    }
-
-    dbg!(&gemini_session);
-
-    // Handle the prepended text for regeneration // TODO BROKEN!
-    if let Some(msg) = messages.get(index) {
-        if !msg.content.is_empty() {
-            gemini_session.reply(vec![Part::text(msg.content.clone().into())]);
-        }
-    }
+    // Apply configuration
+    let content_builder_final = content_builder
+        .with_safety_settings(SAFETY_SETTINGS.to_vec())
+        .with_generation_config(generation_config);
 
     let mut response_text = String::new();
-    if use_streaming {
-        let mut stream = gemini
-            .ask_as_stream(gemini_session)
-            .await
-            .map_err(|err| err.1)?;
+    let mut final_usage = None;
 
-        log::info!("reading response...");
-        while let Some(Ok(res)) = stream.next().await {
+    // Helper closure for cancellation polling
+    let check_cancellation = || async {
+        loop {
             if stop_generating.load(Ordering::SeqCst) {
-                log::info!("stopping generation");
-                drop(stream);
-                stop_generating.store(false, Ordering::SeqCst);
-                break;
+                return;
             }
-
-            for part in res.get_parts() {
-                handle.send((index, part.clone()));
-                match part {
-                    Part::text(info) => {
-                        response_text += info.text();
-                    }
-                    _ => {}
-                }
-            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-    } else {
-        let cancellation_checker = async {
-            loop {
-                if stop_generating.load(Ordering::SeqCst) {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    };
+
+    // 3. Execute Request (Streaming or Blocking)
+    if use_streaming {
+        // Start the stream, respecting cancellation immediately
+        let stream_result = tokio::select! {
+            _ = check_cancellation() => None,
+            res = content_builder_final.execute_stream() => Some(res),
+        };
+
+        let mut stream = match stream_result {
+            Some(Ok(s)) => s.into_stream(),
+            Some(Err(e)) => return Err(e.into()),
+            None => {
+                log::info!("Streaming request cancelled by user before start.");
+                return Ok(());
             }
         };
 
-        log::info!("sending non-streaming request...");
-        tokio::select! {  // todo some working bullshit
-            biased;
+        log::info!("Reading stream response...");
 
-            _ = cancellation_checker => {
-                log::info!("non-streaming generation cancelled by user.");
-                stop_generating.store(false, Ordering::SeqCst);
-            }
+        // Consume the stream
+        loop {
+            tokio::select! {
+                _ = check_cancellation() => {
+                    log::info!("Streaming generation cancelled by user.");
+                    break;
+                }
+                next_item = stream.next() => {
+                    match next_item {
+                        Some(Ok(res)) => {
+                            // Capture usage metadata if available
+                            if let Some(usage) = res.usage_metadata {
+                                final_usage = Some(usage);
+                            }
 
-            result = gemini.ask(&mut gemini_session) => {
-                match result {
-                    Ok(response) => {
-                        log::info!("reading non-streamed response...");
-                        let mut response_text = String::new();
-                        for part in response.get_parts() {
-                            handle.send((index, part.clone()));
-                            if let Part::text(info) = part {
-                                response_text += info.text();
+                            // Process candidates
+                            if let Some(candidate) = res.candidates.first() {
+                                if let Some(parts) = &candidate.content.parts {
+                                    for part in parts {
+                                        // Send intermediate part to UI
+                                        handle.send((index, ChatProgress::Part(part.clone())));
+
+                                        // Accumulate full text for final state
+                                        if let Part::Text { text, .. } = part {
+                                            response_text += &text;
+                                        }
+                                    }
+                                }
                             }
                         }
-                        log::info!(
-                            "non-streaming completion request complete, response length: {}",
-                            response_text.len()
-                        );
-                        handle.success((index, response_text));
-                        return Ok(());
+                        Some(Err(e)) => return Err(e.into()),
+                        None => break, // Stream exhausted
                     }
-                    Err(err) => return Err(err)?,
+                }
+            }
+        }
+    } else {
+        log::info!("Sending non-streaming request...");
+
+        tokio::select! {
+            _ = check_cancellation() => {
+                log::info!("Non-streaming generation cancelled by user.");
+                stop_generating.store(false, Ordering::SeqCst);
+            }
+            result = content_builder_final.execute() => {
+                match result {
+                    Ok(response) => {
+                        log::info!("Non-streaming response received.");
+                        final_usage = response.usage_metadata;
+
+                        if let Some(candidate) = response.candidates.first() {
+                            if let Some(parts) = &candidate.content.parts {
+                                for part in parts {
+                                    handle.send((index, ChatProgress::Part(part.clone())));
+                                    if let Part::Text { text, .. } = part {
+                                        response_text += text;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => return Err(Box::new(err)),
                 }
             }
         }
     }
 
     log::info!(
-        "completion request complete, response length: {}",
+        "Completion request finished. Total response length: {}",
         response_text.len()
     );
-    handle.success((index, response_text));
+
+    // Notify UI of success
+    handle.success((index, response_text, final_usage));
+
     Ok(())
 }
+
+async fn request_completion_code_assist(
+    client: gemini_code_assist_adapter::CodeAssistClient,
+    messages: Vec<Message>,
+    handle: &CompletionFlowerHandle,
+    stop_generating: Arc<AtomicBool>,
+    index: usize,
+    use_streaming: bool,
+    generation_config: GenerationConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    log::info!(
+        "Requesting completion via Code Assist... (history length: {})",
+        messages.len()
+    );
+
+    let dummy_client = Gemini::new("")?; 
+
+    let history = crate::chat_completion::build_history(
+        &dummy_client,
+        &messages,
+        None,
+        false, 
+        Some((index, handle)),
+    )
+    .await?;
+
+    let gemini_request = gemini_rust::GenerateContentRequest {
+        contents: history,
+        generation_config: Some(generation_config),
+        safety_settings: Some(SAFETY_SETTINGS.to_vec()),
+        tools: None,
+        tool_config: None,
+        system_instruction: None,
+        cached_content: None,
+    };
+
+    let mut response_text = String::new();
+    let mut final_usage = None;
+
+    let check_cancellation = || async {
+        loop {
+            if stop_generating.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+
+    if use_streaming {
+        let mut stream = client.generate_content_stream(&gemini_request).await?;
+
+        log::info!("Reading Code Assist stream response...");
+
+        loop {
+            tokio::select! {
+                _ = check_cancellation() => {
+                    log::info!("Code Assist generation cancelled.");
+                    break;
+                }
+                next_item = futures::StreamExt::next(&mut stream) => {
+                    match next_item {
+                        Some(Ok(res)) => {
+                            if let Some(usage) = res.usage_metadata {
+                                final_usage = Some(usage);
+                            }
+                            if let Some(candidate) = res.candidates.first() {
+                                if let Some(parts) = &candidate.content.parts {
+                                    for part in parts {
+                                        handle.send((index, ChatProgress::Part(part.clone())));
+                                        if let Part::Text { text, .. } = part {
+                                            response_text += &text;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(e)) => return Err(e.into()),
+                        None => break,
+                    }
+                }
+            }
+        }
+    } else {
+        tokio::select! {
+            _ = check_cancellation() => {
+                log::info!("Code Assist generation cancelled.");
+            }
+            result = client.generate_content(&gemini_request) => {
+                match result {
+                    Ok(response) => {
+                        final_usage = response.usage_metadata;
+                        if let Some(candidate) = response.candidates.first() {
+                            if let Some(parts) = &candidate.content.parts {
+                                for part in parts {
+                                    handle.send((index, ChatProgress::Part(part.clone())));
+                                    if let Part::Text { text, .. } = part {
+                                        response_text += text;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+    }
+
+    handle.success((index, response_text, final_usage));
+    Ok(())
+}
+
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub enum ChatExportFormat {
@@ -807,14 +916,14 @@ impl Chat {
 
         self.messages.push(Message::assistant(String::new(), model));
 
-        self.spawn_completion(settings);
+        self.spawn_completion(settings, None);
     }
 
-    fn spawn_completion(&self, settings: &Settings) {
+    fn spawn_completion(&self, settings: &Settings, target_index: Option<usize>) {
         let handle = self.flower.handle();
         let stop_generation = self.stop_generating.clone();
         let mut messages = self.messages.clone();
-        let index = self.messages.len() - 1;
+        let index = target_index.unwrap_or(self.messages.len() - 1);
 
         if settings.include_thoughts_in_history {
             for msg in &mut messages {
@@ -827,35 +936,85 @@ impl Chat {
             }
         }
 
-        let no_api_key = settings.api_key.is_empty();
         let use_streaming = settings.use_streaming;
-
-        let gemini = self
-            .model_picker
-            .create_client(&settings.api_key, settings.proxy_path.clone())
-            .set_safety_settings(Some(SAFETY_SETTINGS.to_vec()));
+        let public_file_upload = settings.public_file_upload;
+        let generation_config = self.model_picker.get_generation_config();
+        let auth_method = settings.auth_method;
+        let api_key = settings.api_key.clone();
+        let oauth_token = settings.oauth_token.clone();
+        let project_id = settings.project_id.clone();
+        let proxy_path = settings.proxy_path.clone();
+        let model_picker = self.model_picker.clone();
 
         tokio::spawn(async move {
             handle.activate();
 
-            if no_api_key {
-                handle.error((index, "API key not set.".to_string()));
-                return;
-            }
+            match auth_method {
+                crate::widgets::AuthMethod::ApiKey => {
+                    if api_key.is_empty() {
+                        handle.error((index, "API key not set.".to_string()));
+                        return;
+                    }
 
-            let _ = request_completion(
-                gemini,
-                messages,
-                &handle,
-                stop_generation,
-                index,
-                use_streaming,
-            )
-            .await
-            .map_err(|e| {
-                log::error!("failed to request completion: {e}");
-                handle.error((index, e.to_string()));
-            });
+                    match model_picker.create_client(&api_key, proxy_path) {
+                        Ok(gemini) => {
+                            let _ = request_completion(
+                                gemini,
+                                messages,
+                                &handle,
+                                stop_generation,
+                                index,
+                                use_streaming,
+                                public_file_upload,
+                                generation_config,
+                            )
+                            .await
+                            .map_err(|e| {
+                                log::error!("failed to request completion: {e}");
+                                handle.error((index, e.to_string()));
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("failed to create client: {e}");
+                            handle.error((index, format!("Failed to create client: {}", e)));
+                        }
+                    }
+                }
+                crate::widgets::AuthMethod::CodeAssist => {
+                    if oauth_token.is_empty() || project_id.is_empty() {
+                        handle.error((index, "OAuth token or Project ID not set. Please login in settings.".to_string()));
+                        return;
+                    }
+
+                    let mut client = gemini_code_assist_adapter::CodeAssistClient::new(oauth_token, project_id)
+                        .with_model(model_picker.selected.to_string());
+                    
+                    // Handshake
+                    match client.load_code_assist().await {
+                        Ok(effective_proj) => {
+                            client.set_project_id(effective_proj);
+                        }
+                        Err(e) => log::warn!("Code Assist handshake failed: {e}"),
+                    }
+
+                    if let Err(e) = client.onboard_user().await {
+                        log::warn!("Code Assist onboarding warning: {e}");
+                    }
+
+                    let _ = request_completion_code_assist(
+                        client,
+                        messages,
+                        &handle,
+                        stop_generation,
+                        index,
+                        use_streaming,
+                        generation_config,
+                    ).await.map_err(|e| {
+                        log::error!("failed to request completion via Code Assist: {e}");
+                        handle.error((index, e.to_string()));
+                    });
+                }
+            }
         });
     }
 
@@ -864,7 +1023,7 @@ impl Chat {
         self.messages[idx].content = self.prepend_buf.clone();
         self.prepend_buf.clear();
 
-        self.spawn_completion(settings);
+        self.spawn_completion(settings, Some(idx));
     }
 
     fn show_chatbox(
@@ -926,16 +1085,19 @@ impl Chat {
                         ui.fonts(|f| f.layout_job(layout_job))
                     };
 
-                    self.chatbox_height = egui::TextEdit::multiline(&mut self.chatbox)
-                        .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                        .hint_text("Ask me anything…")
-                        .layouter(&mut layouter)
-                        .show(ui)
-                        .response
-                        .rect
-                        .height()
-                        + images_height;
+                    let text_edit_resp = ui.add(
+                        egui::TextEdit::multiline(&mut self.chatbox)
+                            .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                            .hint_text("Ask me anything…")
+                            .layouter(&mut layouter)
+                            .lock_focus(true)
+                            .desired_width(f32::INFINITY),
+                    );
+
+                    self.chatbox_height = text_edit_resp.rect.height() + images_height;
+
                     if !is_generating
+                        && text_edit_resp.has_focus()
                         && ui.input(|i| i.key_pressed(Key::Enter) && i.modifiers.is_none())
                     {
                         self.send_message(settings);
@@ -960,7 +1122,7 @@ impl Chat {
         let mut last_processed_idx = self.messages.len().saturating_sub(1);
 
         self.flower
-            .extract(|(idx, part)| {
+            .extract(|(idx, progress)| {
                 last_processed_idx = idx;
 
                 // Clear status message when receiving new parts
@@ -1119,14 +1281,13 @@ impl Chat {
                         .with_title("Failed to generate completion!")
                         .with_icon(Icon::Error)
                         .open();
-                    message.is_generating = false;
-                    message.generation_time = Some(message.requested_at.elapsed());
                 }
 
                 if let Some(last_msg) = self.messages.last_mut() {
                     if last_msg.is_generating {
                         last_msg.is_generating = false;
                         last_msg.generation_time = Some(last_msg.requested_at.elapsed());
+                        last_msg.status_message = None;
                     }
                 }
             });
@@ -1201,15 +1362,14 @@ impl Chat {
             .auto_shrink(false)
             .show(ui, |ui| {
                 ui.add_space(16.0);
-                self.virtual_list
-                    .ui_custom_layout(ui, self.messages.len(), |ui, index| {
-                        let Some(message) = self.messages.get_mut(index) else {
-                            return 0;
-                        };
-                        let prev_speaking = message.is_speaking;
-                        if any_prepending && message.is_prepending {
-                            message.is_prepending = false;
-                        }
+                for (index, message) in self.messages.iter_mut().enumerate() {
+                    let prev_speaking = message.is_speaking;
+
+                    if any_prepending && message.is_prepending {
+                        message.is_prepending = false;
+                    }
+
+                    ui.push_id(index, |ui| {
                         let action = message.show(
                             ui,
                             commonmark_cache,
@@ -1230,12 +1390,16 @@ impl Chat {
                                 message_to_delete_idx = Some(idx);
                             }
                         }
-                        any_prepending |= message.is_prepending;
-                        if !prev_speaking && message.is_speaking {
-                            new_speaker = Some(index);
-                        }
-                        1 // 1 rendered item per row
                     });
+
+                    any_prepending |= message.is_prepending;
+
+                    if !prev_speaking && message.is_speaking {
+                        new_speaker = Some(index);
+                    }
+                }
+
+                ui.add_space(12.0); 
             });
         if let Some(regenerate_idx) = regenerate_response_idx {
             self.regenerate_response(settings, regenerate_idx);

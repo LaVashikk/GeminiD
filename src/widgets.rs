@@ -8,7 +8,6 @@ use egui_modal::{Icon, Modal};
 use gemini_rust::{Gemini, GeminiBuilder, GenerationConfig, Model, ThinkingConfig};
 use reqwest;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 #[derive(Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -20,6 +19,25 @@ pub struct ModelPicker {
 
 pub enum RequestInfoType {
     LoadSettings,
+    LoginGoogle,
+    LogoutGoogle,
+    SelectProject(String),
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthMethod {
+    #[default]
+    ApiKey,
+    CodeAssist,
+}
+
+impl fmt::Display for AuthMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuthMethod::ApiKey => write!(f, "API Key"),
+            AuthMethod::CodeAssist => write!(f, "Google Code Assist"),
+        }
+    }
 }
 
 /// Represents the available Gemini models.
@@ -113,7 +131,7 @@ impl fmt::Display for GeminiModel {
         write!(
             f,
             "{}",
-            serde_json::to_string(self) // todo lmao but ok
+            serde_json::to_string(self) 
                 .expect("Failed to serialize model")
                 .trim_matches('"')
         )
@@ -257,7 +275,7 @@ struct ModelSettings {
     pub thinking_budget: Option<i32>,
 }
 
-impl From<ModelSettings> for serde_json::Value {
+impl From<ModelSettings> for GenerationConfig {
     fn from(value: ModelSettings) -> Self {
         let mut config = GenerationConfig::default();
         config.temperature = value.temperature;
@@ -528,23 +546,38 @@ fn help(ui: &mut egui::Ui, text: &str, add_contents: impl FnOnce(&mut egui::Ui))
 
 // This is the main settings struct.
 #[derive(Deserialize, Serialize, Clone)]
+#[serde(default)]
 pub struct Settings {
+    pub auth_method: AuthMethod,
     pub api_key: String,
+    pub oauth_token: String,
+    pub project_id: String,
+    #[serde(skip)]
+    pub available_projects: Vec<String>,
+
     pub model_picker: ModelPicker,
     pub inherit_chat_picker: bool,
     pub use_streaming: bool,
+    #[serde(default)]
     pub include_thoughts_in_history: bool,
+    #[serde(default)]
+    pub public_file_upload: bool,
     pub proxy_path: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            auth_method: AuthMethod::ApiKey,
             api_key: String::new(), // todo try read from env
+            oauth_token: String::new(),
+            project_id: String::new(),
+            available_projects: Vec::new(),
             model_picker: ModelPicker::default(),
             inherit_chat_picker: true,
             use_streaming: true,
             include_thoughts_in_history: false,
+            public_file_upload: true,
             proxy_path: None,
         }
     }
@@ -641,8 +674,13 @@ impl Settings {
                 ui.label("Persist Thoughts in Context");
             });
         });
+        ui.horizontal(|ui| {
+            ui.add(toggle(&mut self.public_file_upload));
+            help(ui, "When enabled, files will be uploaded to Google's servers (File API) instead of being sent as base64 inline data. Uploaded files are temporary and only accessible by you.", |ui| {
+                ui.label("Upload files (File API)");
+            });
+        });
 
-        // ui.end_row();
         ui.separator();
 
         ui.heading("Miscellaneous");
