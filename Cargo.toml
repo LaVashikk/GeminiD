@@ -16,31 +16,36 @@ authors = ["LaVashik <me@lavashik.dev>"]
 # unused = { level = "allow", priority = -1 } # For exploratory dev.
 
 [dependencies]
-eframe = { version = "0.31.1", default-features = false, features = [
+eframe = { version = "0.33.3", default-features = false, features = [
     "persistence",
     "x11",
     "wayland",
-    "accesskit",
+    # "accesskit", # Make egui comptaible with screen readers
     "glow",
 ] }
-egui_commonmark = { git = "https://github.com/zeozeozeo/egui_commonmark.git", branch = "twemoji", features = [
-    "twemoji",
-    "better_syntax_highlighting",
-    "svg",
-] }
-egui-snow = "0.31.0"
+# egui_commonmark = { git = "https://github.com/zeozeozeo/egui_commonmark.git", branch = "twemoji", features = [
+#     "twemoji",
+#     "better_syntax_highlighting",
+#     "svg",
+# ] }
+egui_commonmark = "0.22"
+egui-snow = "0.33"
+egui-modal = { git = "https://github.com/zeozeozeo/egui-modal.git", branch = "egui-0.33" }
+egui_virtual_list = "0.9.0"
+egui-notify = "0.21.0"
+egui-twemoji = "0.8.0"
+egui_extras = { version = "0.33.3", features = ["file", "image"] }
+
 env_logger = "0.11"
 flowync = { version = "5.1", features = ["compact"] }
 log = "0.4.27"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-egui-modal = { git = "https://github.com/zeozeozeo/egui-modal.git", branch = "egui-0.31" }
 tts = { version = "0.26.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
 bytesize = "2.0.1"
 timeago = { version = "0.4", default-features = false, features = ["chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
-egui_virtual_list = "0.7.0"
 serde = { version = "1", features = ["derive"] }
 rfd = { version = "0.15.3", default-features = false, features = [
     "tokio",
@@ -48,13 +53,10 @@ rfd = { version = "0.15.3", default-features = false, features = [
 ] }
 anyhow = "1"
 serde_json = "1"
-egui-notify = "0.19.0"
 ron = "0.10.1"
 fastrand = "2.3.0"
 futures = "0.3"
-egui-twemoji = "0.7.1"
 image = "0.25.6"
-egui_extras = { version = "0.31.1", features = ["file", "image"] }
 base64-stream = "4.0"
 url = "2"
 openssl = { version = "0.10.73", features = ["vendored"] }

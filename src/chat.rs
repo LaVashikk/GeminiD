@@ -1082,17 +1082,18 @@ impl Chat {
                         chatbox_highlighter: highlighter,
                         ..
                     } = self;
-                    let mut layouter = |ui: &egui::Ui, easymark: &str, wrap_width: f32| {
+                    let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+                        let easymark = buffer.as_str();
                         let mut layout_job = highlighter.highlight(ui.style(), easymark);
                         layout_job.wrap.max_width = wrap_width;
-                        ui.fonts(|f| f.layout_job(layout_job))
+                        // ui.fonts(|f| f.layout_job(layout_job)) // todo
                     };
 
                     let text_edit_resp = ui.add(
                         egui::TextEdit::multiline(&mut self.chatbox)
                             .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                             .hint_text("Ask me anything…")
-                            .layouter(&mut layouter)
+                            // .layouter(&mut layouter) // todo that
                             .lock_focus(true)
                             .desired_width(f32::INFINITY),
                     );

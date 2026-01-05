@@ -34,7 +34,7 @@ pub fn set_style(ctx: &egui::Context) {
 
                 // probably not correct, but this does make texts look better
                 y_offset_factor: 0.11, // move glyphs down to better align with common fonts
-                baseline_offset_factor: -0.11, // ...now the entire row is a bit down so shift it back
+                y_offset: -0.11, // ...now the entire row is a bit down so shift it back
                 ..Default::default()
             })
             .into(),
