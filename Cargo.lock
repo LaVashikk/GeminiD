@@ -3,6 +3,50 @@
 version = 4
 
 [[package]]
+name = "GeminiD"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "base64-stream",
+ "bytesize",
+ "chrono",
+ "eframe",
+ "egui-modal",
+ "egui-notify",
+ "egui-snow",
+ "egui-twemoji",
+ "egui_commonmark",
+ "egui_extras",
+ "egui_robust_scroll",
+ "enum-iterator",
+ "env_logger",
+ "fastrand",
+ "flowync",
+ "futures",
+ "futures-util",
+ "gemini-code-assist-adapter",
+ "gemini-rust",
+ "image",
+ "log",
+ "mime_guess",
+ "open",
+ "openssl",
+ "parking_lot",
+ "reqwest",
+ "rfd",
+ "ron 0.10.1",
+ "serde",
+ "serde_json",
+ "time",
+ "timeago",
+ "tokio",
+ "tokio-stream",
+ "tts",
+ "url",
+]
+
+[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1197,9 +1241,10 @@ dependencies = [
 [[package]]
 name = "egui_robust_scroll"
 version = "0.1.0"
-source = "git+https://github.com/LaVashikk/egui_robust_scroll#bf7d36456695ab0814f816e502cbacef09026571"
+source = "git+https://github.com/LaVashikk/egui_robust_scroll#ea0600a02d6b0c0287172130137c382184dd3c97"
 dependencies = [
  "egui",
+ "serde",
  "web-time",
 ]
 
@@ -1702,50 +1747,6 @@ dependencies = [
  "tokio",
  "uuid",
  "yup-oauth2",
-]
-
-[[package]]
-name = "gemini-gui"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "base64-stream",
- "bytesize",
- "chrono",
- "eframe",
- "egui-modal",
- "egui-notify",
- "egui-snow",
- "egui-twemoji",
- "egui_commonmark",
- "egui_extras",
- "egui_robust_scroll",
- "enum-iterator",
- "env_logger",
- "fastrand",
- "flowync",
- "futures",
- "futures-util",
- "gemini-code-assist-adapter",
- "gemini-rust",
- "image",
- "log",
- "mime_guess",
- "open",
- "openssl",
- "parking_lot",
- "reqwest",
- "rfd",
- "ron 0.10.1",
- "serde",
- "serde_json",
- "time",
- "timeago",
- "tokio",
- "tokio-stream",
- "tts",
- "url",
 ]
 
 [[package]]

@@ -1402,7 +1402,7 @@ impl Chat {
                 {
                     ui.set_width(ui.available_width() - scrollbar_width);
                     // println!("Rendering: '{index}'");
-                    let message = &mut self.messages[index]; // надо
+                    let message = &mut self.messages[index];
                     let prev_speaking = message.is_speaking;
 
                     if any_prepending && message.is_prepending {
