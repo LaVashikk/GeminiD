@@ -766,6 +766,19 @@ impl Settings {
             self.let_it_snow = !self.let_it_snow;
         }
 
+        let mut zoom = ui.ctx().zoom_factor();
+
+        ui.horizontal(|ui| {
+            zoom_control_widget(ui, &mut zoom);
+            help(ui, "Adjust the overall size of the user interface", |ui| {
+                ui.label("UI Scale");
+            });
+        });
+
+        if (ui.ctx().zoom_factor() - zoom).abs() > 0.001 {
+            ui.ctx().set_zoom_factor(zoom);
+        }
+
         ui.label("Reset global settings to defaults");
         if ui.button("Reset").clicked() {
             modal.open();
@@ -792,6 +805,60 @@ pub(crate) fn sanitize_text_for_tts(s: &str) -> String {
     let mut start = 0;
     result.push_str(&s[start..]);
     result
+}
+
+fn zoom_control_widget(
+    ui: &mut egui::Ui,
+    current_zoom: &mut f32
+) {
+    let height = 20.0;
+    let btn_width = 24.0;
+    let rounding = 4.0;
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+
+        let btn_minus = egui::Button::new("-")
+            .min_size(egui::vec2(btn_width, height))
+            .corner_radius(egui::CornerRadius {
+                nw: rounding as u8, sw: rounding as u8, ne: 0, se: 0
+            });
+
+        if ui.add(btn_minus).clicked() {
+            *current_zoom = (*current_zoom - 0.1).max(0.2);
+        }
+
+        let text_area_size = egui::vec2(45.0, height);
+        let (rect, _resp) = ui.allocate_exact_size(text_area_size, egui::Sense::hover());
+
+        if ui.is_rect_visible(rect) {
+            ui.painter().rect(
+                rect,
+                0.0,
+                ui.visuals().extreme_bg_color,
+                egui::Stroke::NONE,
+                egui::StrokeKind::Inside
+            );
+
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("{:.0}%", *current_zoom * 100.0),
+                egui::FontId::monospace(12.0),
+                ui.visuals().text_color(),
+            );
+        }
+
+        let btn_plus = egui::Button::new("+")
+            .min_size(egui::vec2(btn_width, height))
+            .corner_radius(egui::CornerRadius {
+                nw: 0, sw: 0, ne: rounding as u8, se: rounding as u8
+            });
+
+        if ui.add(btn_plus).clicked() {
+            *current_zoom = (*current_zoom + 0.1).min(2.0);
+        }
+    });
 }
 
 pub fn thinking_icon(

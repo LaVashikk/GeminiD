@@ -57,6 +57,5 @@ pub fn set_style(ctx: &egui::Context) {
         ],
     );
 
-    ctx.set_zoom_factor(1.09);
     ctx.set_fonts(fonts);
 }

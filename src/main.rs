@@ -94,7 +94,6 @@ impl Ellama {
 
 impl eframe::App for Ellama {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_pixels_per_point(1.2);
         self.sessions.show(ctx);
     }
 
