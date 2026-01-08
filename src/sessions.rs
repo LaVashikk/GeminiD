@@ -794,10 +794,14 @@ impl Sessions {
         self.chats.remove(idx);
         if self.chats.is_empty() {
             self.add_default_chat();
-            self.selected_chat = 0;
+            self.select_chat(0);
         } else if self.selected_chat >= self.chats.len() {
-            self.selected_chat = self.chats.len() - 1;
+            self.select_chat(self.chats.len() - 1);
         }
+    }
+
+    fn select_chat(&mut self, idx: usize) {
+        self.selected_chat = idx;
     }
 
     /// Returns whether any chat was removed
@@ -920,7 +924,7 @@ impl Sessions {
                 .clicked()
             {
                 self.add_default_chat();
-                self.selected_chat = self.chats.len() - 1;
+                self.select_chat(self.chats.len() - 1);
                 self.edited_chat = None;
                 self.settings_open = false;
             }
@@ -931,7 +935,7 @@ impl Sessions {
         egui::ScrollArea::vertical().show(ui, |ui| {
             for i in 0..self.chats.len() {
                 if self.show_chat_in_sidepanel(ui, i, modal) {
-                    self.selected_chat = i;
+                    self.select_chat(i);
                     self.settings_open = false;
                     self.edited_chat = None;
                 }
