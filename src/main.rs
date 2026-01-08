@@ -12,7 +12,7 @@ mod sessions;
 mod style;
 mod widgets;
 
-const TITLE: &str = "Gemini GUI";
+const TITLE: &str = "GeminiD";
 const IMAGE_FORMATS: &[&str] = &[
     "bmp", "dds", "ff", "gif", "hdr", "ico", "jpeg", "jpg", "exr", "png", "pnm", "qoi", "tga",
     "tiff", "webp",
@@ -54,17 +54,17 @@ async fn main() {
     eframe::run_native(
         TITLE,
         native_options,
-        Box::new(|cc| Ok(Box::new(Ellama::new(cc)))),
+        Box::new(|cc| Ok(Box::new(Geminid::new(cc)))),
     )
     .expect("failed to run app");
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
-struct Ellama {
+struct Geminid {
     sessions: Sessions,
 }
 
-impl Ellama {
+impl Geminid {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         style::set_style(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
@@ -92,7 +92,7 @@ impl Ellama {
     }
 }
 
-impl eframe::App for Ellama {
+impl eframe::App for Geminid { // todo rename
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.sessions.show(ctx);
     }
