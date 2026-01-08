@@ -1348,6 +1348,7 @@ impl Chat {
         }
     }
 
+
     fn show_chat_scrollarea(
         &mut self,
         ui: &mut egui::Ui,
@@ -1361,25 +1362,20 @@ impl Chat {
         let mut message_to_delete_idx: Option<usize> = None;
         egui::ScrollArea::vertical()
             .animated(false)
+            .id_salt(self.id())
             .stick_to_bottom(true)
             .auto_shrink(false)
             .show(ui, |ui| {
-                let scrollbar_width = ui.style().spacing.scroll.bar_width + 12.0;
-                ui.set_width(ui.available_width() - scrollbar_width);
-                
+                let scrollbar_width = ui.style().spacing.scroll.bar_width + 8.0;
 
-                // ui.add_space(16.0);
-                RobustVirtualScroll::new(Id::new("chat_virtual_list"))
-                    // todo: anchors
-                    // .anchors(anch_indices, |index| { // TODO! maybe any ref?
-                    //     anchors_map.get(&index).cloned().unwrap_or_default() // bruh
-                    // })
+                RobustVirtualScroll::new(Id::new(self.id()))
                     .show(
                         ui,
                         self.messages.len(),
-                        |i| Id::new(i), // todo: add ID in struct?!
+                        |i| Id::new(i),
                         |ui, index|
                 {
+                    ui.set_width(ui.available_width() - scrollbar_width);
                     // println!("Rendering: '{index}'");
                     let message = &mut self.messages[index]; // надо
                     let prev_speaking = message.is_speaking;
